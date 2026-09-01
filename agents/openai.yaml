@@ -1,0 +1,4 @@
+interface:
+  display_name: "Project Doc Harness"
+  short_description: "Structure project docs for reliable AI development"
+  default_prompt: "Use $project-doc-harness to organize this repository’s documentation for efficient AI development."
