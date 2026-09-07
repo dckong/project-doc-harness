@@ -5,19 +5,106 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import json
+import os
 import re
 import sys
 from pathlib import Path
 
 
-REQUIRED_DIRS = (
-    "docs/design-docs",
-    "docs/product-specs",
-    "docs/exec-plans/active",
-    "docs/exec-plans/completed",
-    "docs/generated",
-    "docs/references",
-)
+CONFIG_NAME = "doc-harness.json"
+# File roles and directory roles share one selection and path mapping.
+ARTIFACT_PATHS = {
+    "architecture": "ARCHITECTURE.md",
+    "project-state": "docs/PROJECT_STATE.md",
+    "design-docs": "docs/design-docs",
+    "product-specs": "docs/product-specs",
+    "plans": "docs/exec-plans",
+    "tech-debt": "docs/exec-plans/tech-debt-tracker.md",
+    "operations": "docs/operations",
+    "generated": "docs/generated",
+    "references": "docs/references",
+    "quality": "docs/QUALITY_SCORE.md",
+    "reliability": "docs/RELIABILITY.md",
+    "security": "docs/SECURITY.md",
+}
+DIRECTORY_ROLES = {"design-docs", "product-specs", "plans", "operations", "generated", "references"}
+
+
+class Layout:
+    def __init__(self, root: Path, artifacts: dict[str, str]) -> None:
+        self.root = root
+        self.artifacts = dict(artifacts)
+        for role, relative in self.artifacts.items():
+            if role not in ARTIFACT_PATHS:
+                raise ValueError(f"unknown artifact role: {role}")
+            if not isinstance(relative, str) or not relative.strip():
+                raise ValueError(f"artifact {role} requires a nonempty repository-relative path")
+            path = Path(relative)
+            if path.is_absolute() or ".." in path.parts or path.as_posix() == ".":
+                raise ValueError(f"artifact {role} must stay inside the repository: {relative}")
+            if not (root / path).resolve().is_relative_to(root.resolve()):
+                raise ValueError(f"artifact {role} resolves outside the repository: {relative}")
+            self.artifacts[role] = path.as_posix()
+        values = list(self.artifacts.values())
+        if len(values) != len(set(values)) or any(Path(value).parts[0] in {"AGENTS.md", CONFIG_NAME} for value in values):
+            raise ValueError("artifact paths must be distinct and must not replace AGENTS.md or the config")
+        for parent_role, parent in self.artifacts.items():
+            for child_role, child in self.artifacts.items():
+                if child.startswith(parent + "/"):
+                    # Preserve intentional nesting (plans + debt), but reject
+                    # overlaps that would apply unrelated directory contracts.
+                    if parent_role not in DIRECTORY_ROLES or not ARTIFACT_PATHS[child_role].startswith(ARTIFACT_PATHS[parent_role] + "/"):
+                        raise ValueError(f"overlapping artifact paths: {parent_role} and {child_role}")
+
+    @classmethod
+    def load(cls, root: Path) -> "Layout":
+        config = root / CONFIG_NAME
+        if config.exists():
+            data = json.loads(config.read_text(encoding="utf-8"))
+            if not isinstance(data, dict) or set(data) != {"artifacts"} or not isinstance(data["artifacts"], dict):
+                raise ValueError(f"{CONFIG_NAME} must contain an artifacts object")
+            return cls(root, data["artifacts"])
+        # Without a declaration, check only optional roles already present.
+        artifacts = {role: path for role, path in ARTIFACT_PATHS.items() if (root / path).exists()}
+        if "plans" in artifacts and not any((root / artifacts["plans"] / area).exists() for area in ("active", "completed")):
+            artifacts.pop("plans")  # A debt tracker alone does not adopt plans.
+        return cls(root, artifacts)
+
+    def role_for(self, canonical: str) -> str | None:
+        for role, base in sorted(ARTIFACT_PATHS.items(), key=lambda item: -len(item[1])):
+            if canonical == base or (role in DIRECTORY_ROLES and canonical.startswith(base + "/")):
+                return role
+        return None
+
+    def includes(self, canonical: str) -> bool:
+        return canonical == "AGENTS.md" or self.role_for(canonical) in self.artifacts
+
+    def relative(self, canonical: str) -> str:
+        role = self.role_for(canonical)
+        if role in self.artifacts:
+            return self.artifacts[role] + canonical[len(ARTIFACT_PATHS[role]):]
+        return canonical
+
+    def path(self, canonical: str) -> Path:
+        return self.root / self.relative(canonical)
+
+    def files(self) -> list[str]:
+        result = ["AGENTS.md"]
+        for role, canonical in ARTIFACT_PATHS.items():
+            if role not in self.artifacts:
+                continue
+            if role == "plans":
+                result.extend([canonical + "/active/index.md", canonical + "/completed/index.md"])
+            elif role in {"design-docs", "product-specs"}:
+                result.append(canonical + "/index.md")
+            elif role not in DIRECTORY_ROLES:
+                result.append(canonical)
+        return result
+
+    def directories(self) -> list[str]:
+        return [base for role, base in ARTIFACT_PATHS.items() if role in self.artifacts and role in DIRECTORY_ROLES]
+
 
 AGENTS_TEMPLATE = """# Repository Guide
 
@@ -228,9 +315,10 @@ TODO
 PROJECT_STATE_TEMPLATE = """---
 doc_type: project-state
 status: active
+work_status: active
 owner: TBD
 last_reviewed: TBD
-verified_commit: TBD
+verified_commit: Unknown
 ---
 
 # Project State
@@ -245,27 +333,27 @@ TODO: Summarize current facts and link their authoritative documents.
 
 ## Next action
 
-TODO: Name one directly executable and verifiable action.
+TODO: Link the priority plan snapshot, or state the next action if no plan exists. For waiting/idle, set work_status and add Resume when.
 
 ## Blocked or awaiting
 
-None
+Unknown — inventory blockers and dependencies.
 
 ## Active work
 
-None
+Unknown — inventory active plans.
 
 ## Environment divergence
 
-None
+Unknown — environments have not been compared.
 
 ## Last verified
 
-TODO: Record date, commit or worktree, environment, commands, result, and limitations.
+Unknown — no verification recorded. Link task/environment evidence when available; do not copy every plan result.
 
-## Do not reopen
+## Decisions and review conditions
 
-None
+Unknown — identify applicable decisions, their assumptions and review conditions.
 """
 
 DOC_TYPE_STATUSES = {
@@ -275,11 +363,12 @@ DOC_TYPE_STATUSES = {
     "operations": {"draft", "active", "deprecated"},
     "reliability": {"draft", "active", "deprecated"},
     "security": {"draft", "active", "deprecated"},
-    "decision": {"proposed", "implemented", "rejected", "superseded"},
+    "decision": {"proposed", "accepted", "implemented", "rejected", "superseded"},
     "plan": {"active", "blocked", "completed", "cancelled"},
     "tech-debt": {"active", "deprecated"},
 }
-CURRENT_OWNER_STATUSES = {"active", "blocked", "implemented"}
+CURRENT_OWNER_STATUSES = {"active", "blocked", "accepted", "implemented"}
+HISTORICAL_STATUSES = {"completed", "cancelled", "rejected", "superseded", "deprecated"}
 META_FIELDS = ("doc_type", "status", "owner", "last_reviewed")
 LINK_RE = re.compile(r"(?<!!)\[[^\]]+\]\(([^)]+)\)")
 HEADING_RE = re.compile(r"^(#{1,6})\s+(.+?)\s*$", re.MULTILINE)
@@ -293,7 +382,7 @@ PROJECT_STATE_HEADINGS = (
     "Active work",
     "Environment divergence",
     "Last verified",
-    "Do not reopen",
+    "Decisions and review conditions",
 )
 RESUME_LABELS = (
     "Current state",
@@ -329,49 +418,68 @@ class Report:
         )
 
 
-def scaffold(root: Path, with_project_state: bool) -> int:
+def scaffold(root: Path, with_project_state: bool = False, selected: list[str] | None = None) -> int:
+    layout = Layout.load(root)
+    requested = list(selected or [])
+    if with_project_state:
+        requested.append("project-state")
+    for role in requested:
+        layout.artifacts.setdefault(role, ARTIFACT_PATHS[role])
+    layout = Layout(root, layout.artifacts)
+    root.mkdir(parents=True, exist_ok=True)
     created: list[Path] = []
-    for relative in REQUIRED_DIRS:
-        path = root / relative
+    # Explicit selection persists so later checks can detect a deleted artifact.
+    if requested:
+        config = root / CONFIG_NAME
+        content = json.dumps({"artifacts": layout.artifacts}, indent=2, ensure_ascii=False) + "\n"
+        if not config.exists() or config.read_text(encoding="utf-8") != content:
+            config.write_text(content, encoding="utf-8")
+            created.append(config)
+    for canonical in layout.directories():
+        path = layout.path(canonical)
         if not path.exists():
             path.mkdir(parents=True)
             created.append(path)
-
     templates = dict(TEMPLATES)
-    if with_project_state:
-        templates["docs/PROJECT_STATE.md"] = PROJECT_STATE_TEMPLATE
+    templates["docs/PROJECT_STATE.md"] = PROJECT_STATE_TEMPLATE
+    templates["docs/design-docs/index.md"] = "# Design documents\n\nNo design decisions recorded.\n"
+    if "project-state" in layout.artifacts:
         templates["AGENTS.md"] = AGENTS_TEMPLATE.replace(
-            "## Documentation map\n\n",
-            "## Documentation map\n\n" + PROJECT_STATE_LINK,
+            "## Documentation map\n\n", "## Documentation map\n\n" + PROJECT_STATE_LINK
         )
-
-    for relative, content in templates.items():
-        path = root / relative
+    for canonical in layout.files():
+        path = layout.path(canonical)
         if path.exists():
             continue
+        # Rewrite template links relative to the selected destination, omitting
+        # navigation entries for roles the project has not adopted.
+        lines = []
+        for line in templates[canonical].splitlines(keepends=True):
+            targets = LINK_RE.findall(line)
+            omit = False
+            for target in targets:
+                source_target = (Path(canonical).parent / target).as_posix()
+                if not layout.includes(source_target):
+                    omit = True
+                    break
+                mapped = os.path.relpath(layout.path(source_target), path.parent).replace(os.sep, "/")
+                line = line.replace("](" + target + ")", "](" + mapped + ")")
+            if not omit:
+                lines.append(line)
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(content, encoding="utf-8")
+        path.write_text("".join(lines), encoding="utf-8")
         created.append(path)
-
-    if with_project_state:
+    # Existing Markdown remains unchanged. Surface the required follow-up even
+    # when its author uses a different heading or navigation format.
+    if "project-state" in layout.artifacts:
         agents = root / "AGENTS.md"
-        if agents.is_file():
-            text = agents.read_text(encoding="utf-8")
-            if "docs/PROJECT_STATE.md" not in text and "## Documentation map\n" in text:
-                text = text.replace(
-                    "## Documentation map\n",
-                    "## Documentation map\n\n" + PROJECT_STATE_LINK.rstrip() + "\n",
-                    1,
-                )
-                agents.write_text(text, encoding="utf-8")
-                if agents not in created:
-                    created.append(agents)
-
-    if created:
-        for path in created:
-            print(f"CREATED_OR_UPDATED: {path.relative_to(root)}")
-    else:
-        print("No changes: all scaffold paths already exist.")
+        target = layout.relative("docs/PROJECT_STATE.md")
+        if target not in agents.read_text(encoding="utf-8"):
+            print(f"ACTION_REQUIRED: add a link from AGENTS.md to {target}; existing Markdown was preserved")
+    for path in created:
+        print(f"CREATED_OR_UPDATED: {path.relative_to(root)}")
+    if not created:
+        print("No changes: all selected scaffold paths already exist.")
     print("Next: replace TODO/TBD placeholders with verified project facts, then run check --strict.")
     return 0
 
@@ -426,7 +534,7 @@ def check_links(root: Path, paths: list[Path], report: Report) -> None:
                 report.errors.append(f"broken link in {path.relative_to(root)}: {target}")
 
 
-def metadata_paths(root: Path) -> list[Path]:
+def metadata_paths(root: Path, layout: Layout) -> list[Path]:
     paths: set[Path] = set()
     for relative in (
         "ARCHITECTURE.md",
@@ -435,8 +543,8 @@ def metadata_paths(root: Path) -> list[Path]:
         "docs/SECURITY.md",
         "docs/exec-plans/tech-debt-tracker.md",
     ):
-        path = root / relative
-        if path.is_file():
+        path = layout.path(relative)
+        if layout.includes(relative) and path.is_file():
             paths.add(path)
     for relative in (
         "docs/design-docs",
@@ -445,8 +553,8 @@ def metadata_paths(root: Path) -> list[Path]:
         "docs/exec-plans/completed",
         "docs/operations",
     ):
-        directory = root / relative
-        if not directory.is_dir():
+        directory = layout.path(relative)
+        if not layout.includes(relative) or not directory.is_dir():
             continue
         for path in directory.rglob("*.md"):
             if path.name.lower() not in {"index.md", "readme.md", "agents.md"}:
@@ -454,8 +562,12 @@ def metadata_paths(root: Path) -> list[Path]:
     return sorted(paths)
 
 
-def expected_doc_type(root: Path, path: Path) -> str | None:
+def expected_doc_type(root: Path, path: Path, layout: Layout) -> str | None:
     relative = path.relative_to(root).as_posix()
+    for role, mapped in sorted(layout.artifacts.items(), key=lambda item: -len(item[1])):
+        if relative == mapped or (role in DIRECTORY_ROLES and relative.startswith(mapped + "/")):
+            relative = ARTIFACT_PATHS[role] + relative[len(mapped):]
+            break
     if relative == "ARCHITECTURE.md":
         return "architecture"
     if relative == "docs/PROJECT_STATE.md":
@@ -477,19 +589,58 @@ def expected_doc_type(root: Path, path: Path) -> str | None:
     return None
 
 
-def check_date(path: Path, root: Path, value: str, stale_days: int, report: Report) -> None:
+def check_date(
+    path: Path, root: Path, value: str, stale_days: int | None, report: Report,
+    field: str = "last_reviewed",
+) -> None:
     display = path.relative_to(root)
-    if value in ("", "TBD"):
-        report.warnings.append(f"{display} has no verified last_reviewed date")
+    if value in ("", "TBD", "TODO"):
+        report.warnings.append(f"{display} has no verified {field} date")
+        return
+    if value == "Unknown":
+        report.info.append(f"{display} {field} is Unknown; freshness has not been established")
         return
     try:
-        reviewed_date = dt.date.fromisoformat(value)
+        if field == "observed_at" and "T" in value:
+            date = dt.datetime.fromisoformat(value.replace("Z", "+00:00")).date()
+        else:
+            date = dt.date.fromisoformat(value)
     except ValueError:
-        report.warnings.append(f"{display} has invalid last_reviewed date: {value}")
+        report.warnings.append(f"{display} has invalid {field} date: {value}")
         return
-    age = (dt.date.today() - reviewed_date).days
-    if age > stale_days:
-        report.warnings.append(f"{display} was last reviewed {age} days ago")
+    age = (dt.date.today() - date).days
+    if age < 0:
+        report.warnings.append(f"{display} has future {field} date: {value}")
+    elif stale_days is not None and age > stale_days:
+        report.warnings.append(f"{display} {field} is {age} days old (limit {stale_days})")
+
+
+def freshness_limit(data: dict[str, str], field: str, default: int, display: Path, report: Report) -> int:
+    if field not in data:
+        return default
+    try:
+        value = int(data[field])
+        if value <= 0:
+            raise ValueError
+    except ValueError:
+        report.errors.append(f"{display} {field} must be a positive integer")
+        return default
+    return value
+
+
+def check_freshness(root: Path, path: Path, data: dict[str, str], report: Report, stale_days: int) -> None:
+    historical = data.get("status") in HISTORICAL_STATUSES
+    display = path.relative_to(root)
+    limit = freshness_limit(data, "review_after_days", stale_days, display, report)
+    has_progress_date = data.get("doc_type") in {"plan", "project-state"} and "updated_at" in data
+    # Archive dates retain their evidence meaning. Validate their format without
+    # requiring periodic edits just to keep historical records under an age limit.
+    check_date(path, root, data.get("last_reviewed", ""), None if historical or has_progress_date else limit, report)
+    if has_progress_date:
+        check_date(path, root, data["updated_at"], None if historical else limit, report, "updated_at")
+    if "observed_at" in data or "observation_max_age_days" in data:
+        observation_limit = freshness_limit(data, "observation_max_age_days", stale_days, display, report)
+        check_date(path, root, data.get("observed_at", ""), None if historical else observation_limit, report, "observed_at")
 
 
 def check_replacement(root: Path, path: Path, data: dict[str, str], report: Report) -> None:
@@ -497,7 +648,13 @@ def check_replacement(root: Path, path: Path, data: dict[str, str], report: Repo
         return
     replacement = data.get("superseded_by", "")
     display = path.relative_to(root)
-    if not replacement or replacement == "TBD":
+    if data.get("status") == "deprecated":
+        reason = data.get("deprecation_reason", "")
+        if is_placeholder_action(reason):
+            report.errors.append(f"{display} is deprecated but has no deprecation_reason")
+        if not replacement:
+            return
+    if not replacement or replacement in {"TBD", "None", "Unknown", "Not applicable"}:
         report.errors.append(f"{display} is {data.get('status')} but has no superseded_by target")
         return
     target = (root / replacement).resolve()
@@ -506,12 +663,14 @@ def check_replacement(root: Path, path: Path, data: dict[str, str], report: Repo
     except ValueError:
         report.errors.append(f"{display} has superseded_by outside repository: {replacement}")
         return
-    if not target.exists():
+    if target == path.resolve():
+        report.errors.append(f"{display} cannot supersede itself")
+    elif not target.is_file():
         report.errors.append(f"{display} has missing superseded_by target: {replacement}")
 
 
-def check_metadata(root: Path, report: Report, stale_days: int) -> None:
-    for path in metadata_paths(root):
+def check_metadata(root: Path, report: Report, stale_days: int, layout: Layout) -> None:
+    for path in metadata_paths(root, layout):
         text = path.read_text(encoding="utf-8", errors="replace")
         data = frontmatter(text)
         display = path.relative_to(root)
@@ -523,7 +682,7 @@ def check_metadata(root: Path, report: Report, stale_days: int) -> None:
                 report.warnings.append(f"{display} is missing metadata: {field}")
 
         doc_type = data.get("doc_type", "")
-        expected = expected_doc_type(root, path)
+        expected = expected_doc_type(root, path, layout)
         if expected and doc_type and doc_type != expected:
             report.errors.append(f"{display} has doc_type {doc_type}; expected {expected}")
         if doc_type and doc_type not in DOC_TYPE_STATUSES:
@@ -536,11 +695,15 @@ def check_metadata(root: Path, report: Report, stale_days: int) -> None:
                 f"expected one of {', '.join(sorted(allowed))}"
             )
         owner = data.get("owner", "")
-        if status in CURRENT_OWNER_STATUSES and owner in ("", "TBD"):
+        if status in CURRENT_OWNER_STATUSES and owner.strip().casefold() in {"", "tbd", "todo", "unknown", "none", "not applicable"}:
             report.warnings.append(f"{display} is current work or authority but owner is {owner or 'missing'}")
-        check_date(path, root, data.get("last_reviewed", ""), stale_days, report)
-        if doc_type == "project-state" and data.get("verified_commit", "") in ("", "TBD"):
-            report.warnings.append(f"{display} has no verified_commit")
+        check_freshness(root, path, data, report, stale_days)
+        if doc_type == "project-state":
+            commit = data.get("verified_commit", "")
+            if commit == "Unknown":
+                report.info.append(f"{display} verified_commit is Unknown; no verified revision claimed")
+            elif is_placeholder_action(commit):
+                report.warnings.append(f"{display} has no verified_commit")
         check_replacement(root, path, data, report)
 
         placeholders = len(PLACEHOLDER_RE.findall(text))
@@ -569,12 +732,12 @@ def section_text(text: str, heading: str) -> str | None:
 
 
 def bullet_value(text: str, label: str) -> str | None:
-    match = re.search(rf"^\s*-\s*{re.escape(label)}\s*:\s*(.*?)\s*$", text, re.IGNORECASE | re.MULTILINE)
+    match = re.search(rf"^[ \t]*-[ \t]*{re.escape(label)}[ \t]*:[ \t]*(.*?)[ \t]*$", text, re.IGNORECASE | re.MULTILINE)
     return match.group(1).strip() if match else None
 
 
 def field_value(text: str, label: str) -> str | None:
-    match = re.search(rf"^\s*-?\s*{re.escape(label)}\s*:\s*(.*?)\s*$", text, re.IGNORECASE | re.MULTILINE)
+    match = re.search(rf"^[ \t]*-?[ \t]*{re.escape(label)}[ \t]*:[ \t]*(.*?)[ \t]*$", text, re.IGNORECASE | re.MULTILINE)
     return match.group(1).strip() if match else None
 
 
@@ -582,16 +745,16 @@ def is_placeholder_action(value: str) -> bool:
     normalized = value.strip().casefold()
     return (
         not normalized
-        or normalized in {"none", "todo", "tbd", "n/a"}
+        or normalized in {"none", "todo", "tbd", "n/a", "unknown", "not applicable"}
         or "继续开发" in value
         or "continue development" in normalized
         or bool(PLACEHOLDER_RE.search(value))
     )
 
 
-def plan_files(root: Path, area: str) -> list[Path]:
-    directory = root / area
-    if not directory.is_dir():
+def plan_files(root: Path, area: str, layout: Layout) -> list[Path]:
+    directory = layout.path(area)
+    if not layout.includes(area) or not directory.is_dir():
         return []
     return sorted(
         path
@@ -612,13 +775,23 @@ def check_resume_snapshot(root: Path, path: Path, report: Report) -> None:
             report.errors.append(f"{display} Resume snapshot is missing label: {label}")
     next_action = bullet_value(snapshot, "Next action")
     if next_action is not None and is_placeholder_action(next_action):
-        report.errors.append(f"{display} Resume snapshot has no executable Next action")
+        report.errors.append(f"{display} Resume snapshot has a missing or placeholder Next action")
+    data = frontmatter(text) or {}
+    if data.get("status") == "blocked":
+        resume = bullet_value(snapshot, "Resume when") or ""
+        blockers = [bullet_value(snapshot, label) or "" for label in ("Blocked by", "Awaiting")]
+        if is_placeholder_action(resume):
+            report.errors.append(f"{display} blocked plan needs a Resume when condition")
+        if all(is_placeholder_action(value) for value in blockers):
+            report.errors.append(f"{display} blocked plan needs a blocker or waiting object")
     for label in VERIFICATION_LABELS:
         value = field_value(snapshot, label)
         if value is None:
             report.errors.append(f"{display} Resume snapshot Last verified is missing: {label}")
         elif value in ("", "TBD", "TODO"):
             report.warnings.append(f"{display} Resume snapshot Last verified has no value for: {label}")
+        elif value == "Unknown":
+            report.info.append(f"{display} Resume snapshot {label} is Unknown; evidence is incomplete")
 
 
 def check_completion_notes(root: Path, path: Path, report: Report) -> None:
@@ -638,9 +811,9 @@ def check_completion_notes(root: Path, path: Path, report: Report) -> None:
             report.errors.append(f"{display} Completion notes has empty section: {heading}")
 
 
-def check_plan_contracts(root: Path, report: Report) -> list[Path]:
-    active = plan_files(root, "docs/exec-plans/active")
-    completed = plan_files(root, "docs/exec-plans/completed")
+def check_plan_contracts(root: Path, report: Report, layout: Layout) -> list[Path]:
+    active = plan_files(root, "docs/exec-plans/active", layout)
+    completed = plan_files(root, "docs/exec-plans/completed", layout)
     for path in active:
         data = frontmatter(path.read_text(encoding="utf-8", errors="replace")) or {}
         if data.get("status") not in {"active", "blocked"}:
@@ -658,38 +831,58 @@ def check_plan_contracts(root: Path, report: Report) -> list[Path]:
     return active
 
 
-def check_project_state(root: Path, active_plans: list[Path], report: Report) -> None:
-    path = root / "docs/PROJECT_STATE.md"
-    if active_plans and not path.is_file():
-        report.errors.append("active execution plans require docs/PROJECT_STATE.md")
+def check_project_state(root: Path, active_plans: list[Path], report: Report, layout: Layout) -> None:
+    path = layout.path("docs/PROJECT_STATE.md")
+    display = layout.relative("docs/PROJECT_STATE.md")
+    selected = "project-state" in layout.artifacts
+    if active_plans and (not selected or not path.is_file()):
+        report.errors.append(f"active execution plans require {display} (select the project-state role)")
         return
-    if not path.is_file():
+    if not selected or not path.is_file():
         return
 
     agents = root / "AGENTS.md"
-    if agents.is_file() and "docs/PROJECT_STATE.md" not in agents.read_text(
+    if agents.is_file() and display not in agents.read_text(
         encoding="utf-8", errors="replace"
     ):
-        report.errors.append("AGENTS.md does not link docs/PROJECT_STATE.md")
+        report.errors.append(f"AGENTS.md does not link {display}")
 
     text = path.read_text(encoding="utf-8", errors="replace")
     if len(text.splitlines()) > 100:
         report.warnings.append(
-            f"docs/PROJECT_STATE.md is {len(text.splitlines())} lines; keep the state capsule at or below 100"
+            f"{display} is {len(text.splitlines())} lines; keep the state capsule at or below 100"
         )
     for heading in PROJECT_STATE_HEADINGS:
         content = section_text(text, heading)
+        if content is None and heading == "Decisions and review conditions":
+            content = section_text(text, "Do not reopen")  # Legacy title; retain existing documents.
         if content is None:
-            report.errors.append(f"docs/PROJECT_STATE.md is missing heading: {heading}")
+            report.errors.append(f"{display} is missing heading: {heading}")
         elif not content.strip():
-            report.errors.append(f"docs/PROJECT_STATE.md has empty section: {heading}")
+            report.errors.append(f"{display} has empty section: {heading}")
+    data = frontmatter(text) or {}
+    work_status = data.get("work_status", "active")
+    if work_status not in {"active", "waiting", "idle"}:
+        report.errors.append(f"{display} has invalid work_status: {work_status}")
     next_action = section_text(text, "Next action")
-    if next_action is not None and is_placeholder_action(next_action):
-        report.errors.append("docs/PROJECT_STATE.md has no executable Next action")
+    if work_status == "idle":
+        if active_plans:
+            report.errors.append(f"{display} cannot be idle while active or blocked plans exist")
+        if (next_action or "").strip().casefold() != "none":
+            report.errors.append(f"{display} idle state must record Next action: None")
+        if (section_text(text, "Active work") or "").strip().casefold() != "none":
+            report.errors.append(f"{display} idle state must record Active work: None")
+    elif next_action is not None and is_placeholder_action(next_action):
+        report.errors.append(f"{display} has a missing or placeholder Next action")
+    if work_status in {"waiting", "idle"}:
+        if is_placeholder_action(section_text(text, "Resume when") or ""):
+            report.errors.append(f"{display} {work_status} state needs a Resume when condition")
+    if work_status == "waiting" and is_placeholder_action(section_text(text, "Blocked or awaiting") or ""):
+        report.errors.append(f"{display} waiting state needs a blocker or waiting object")
 
 
-def check_decision_contracts(root: Path, report: Report) -> None:
-    for path in metadata_paths(root):
+def check_decision_contracts(root: Path, report: Report, layout: Layout) -> None:
+    for path in metadata_paths(root, layout):
         text = path.read_text(encoding="utf-8", errors="replace")
         data = frontmatter(text) or {}
         if data.get("doc_type") != "decision":
@@ -698,14 +891,16 @@ def check_decision_contracts(root: Path, report: Report) -> None:
             report.warnings.append(f"{path.relative_to(root)} decision has no Alternatives considered section")
 
 
-def check_indexes(root: Path, report: Report) -> None:
+def check_indexes(root: Path, report: Report, layout: Layout) -> None:
     for area in (
         "docs/design-docs",
         "docs/product-specs",
         "docs/exec-plans/active",
         "docs/exec-plans/completed",
     ):
-        directory = root / area
+        if not layout.includes(area):
+            continue
+        directory = layout.path(area)
         index = directory / "index.md"
         if not directory.is_dir() or not index.is_file():
             continue
@@ -725,17 +920,17 @@ def audit(root: Path, strict: bool, stale_days: int) -> int:
         print(f"ERROR: repository root does not exist: {root}", file=sys.stderr)
         return 2
 
-    for relative in (
-        "AGENTS.md",
-        "ARCHITECTURE.md",
-        "docs/design-docs/index.md",
-        "docs/product-specs/index.md",
-    ):
-        if not (root / relative).is_file():
-            report.errors.append(f"missing required file: {relative}")
-    for relative in REQUIRED_DIRS:
-        if not (root / relative).is_dir():
-            report.errors.append(f"missing required directory: {relative}")
+    try:
+        layout = Layout.load(root)
+    except (ValueError, OSError) as exc:
+        print(f"ERROR: invalid {CONFIG_NAME}: {exc}", file=sys.stderr)
+        return 2
+    for canonical in layout.files():
+        if not layout.path(canonical).is_file():
+            report.errors.append(f"missing required file: {layout.relative(canonical)}")
+    for canonical in layout.directories():
+        if not layout.path(canonical).is_dir():
+            report.errors.append(f"missing required directory: {layout.relative(canonical)}")
 
     agents = root / "AGENTS.md"
     if agents.is_file():
@@ -749,11 +944,11 @@ def audit(root: Path, strict: bool, stale_days: int) -> int:
 
     paths = markdown_files(root)
     check_links(root, paths, report)
-    check_metadata(root, report, stale_days)
-    active_plans = check_plan_contracts(root, report)
-    check_project_state(root, active_plans, report)
-    check_decision_contracts(root, report)
-    check_indexes(root, report)
+    check_metadata(root, report, stale_days, layout)
+    active_plans = check_plan_contracts(root, report, layout)
+    check_project_state(root, active_plans, report, layout)
+    check_decision_contracts(root, report, layout)
+    check_indexes(root, report, layout)
 
     placeholders = sum(
         len(PLACEHOLDER_RE.findall(path.read_text(encoding="utf-8", errors="replace")))
@@ -762,6 +957,7 @@ def audit(root: Path, strict: bool, stale_days: int) -> int:
     if placeholders:
         report.info.append(f"found {placeholders} TODO/TBD placeholder(s) requiring project knowledge")
 
+    report.info.append("Mechanical checks only: supported local file-link targets, index filename mentions, metadata, dates, states and required sections. Not verified: anchors, evidence truth, action feasibility, freshness events or semantic agreement; content review is required.")
     report.print()
     if report.errors or (strict and report.warnings):
         return 1
@@ -773,19 +969,20 @@ def parser() -> argparse.ArgumentParser:
         description="Scaffold or audit resumable repository documentation for AI development."
     )
     sub = result.add_subparsers(dest="command", required=True)
-    init = sub.add_parser("init", help="Create missing documentation files without overwriting")
+    init = sub.add_parser("init", help="Create selected missing Markdown; preserve existing Markdown and persist explicit artifact selection")
     init.add_argument("--root", type=Path, default=Path.cwd(), help="Repository root")
+    init.add_argument("--with", dest="selected", action="append", choices=sorted(ARTIFACT_PATHS), help="Adopt an optional role at its default path; repeatable and saved in doc-harness.json")
     init.add_argument(
         "--with-project-state",
         action="store_true",
-        help="Create and link docs/PROJECT_STATE.md for cross-session or complex work",
+        help="Select project-state; link it in a new AGENTS.md, or report a required link for an existing entry",
     )
     check = sub.add_parser(
         "check", help="Audit structure, links, lifecycle, resumability, metadata, and freshness"
     )
     check.add_argument("--root", type=Path, default=Path.cwd(), help="Repository root")
     check.add_argument("--strict", action="store_true", help="Treat warnings as failures")
-    check.add_argument("--stale-days", type=int, default=90, help="Warn after this many days")
+    check.add_argument("--stale-days", type=int, default=90, help="Default age limit for current documents/observations; historical records are exempt")
     return result
 
 
@@ -793,7 +990,11 @@ def main() -> int:
     args = parser().parse_args()
     root = args.root.expanduser().resolve()
     if args.command == "init":
-        return scaffold(root, args.with_project_state)
+        try:
+            return scaffold(root, args.with_project_state, args.selected)
+        except (ValueError, OSError) as exc:
+            print(f"ERROR: {exc}", file=sys.stderr)
+            return 2
     return audit(root, args.strict, args.stale_days)
 
 
