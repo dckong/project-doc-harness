@@ -13,7 +13,13 @@ Project Doc Harness 是一个用于整理和维护项目文档的 Agent Skill，
 安装后，在项目中对 agent 说一句就行：
 
 ```text
-使用 $project-doc-harness 管理/整理项目文档
+使用 $project-doc-harness 管理项目文档
+```
+
+或：
+
+```text
+使用 $project-doc-harness 更新项目文档
 ```
 
 日常管理或整理项目文档时，agent 通常会根据任务自动调用这个 skill，无需每次手动指定。具体采用哪些文档、如何整理、何时运行检查，都由 agent 结合项目情况处理。
