@@ -139,18 +139,6 @@ project-doc-harness/
 └── tests/test_doc_harness.py       # 标准库 unittest 测试
 ```
 
-## 开发与贡献
-
-欢迎通过 [Issues](https://github.com/dckong/project-doc-harness/issues) 反馈问题，或提交 Pull Request。反馈检查器问题时，请提供最小文档示例、执行命令、Python 版本以及预期和实际结果。
-
-在仓库根目录运行现有测试：
-
-```bash
-python3 -m unittest discover -s tests -v
-```
-
-修改契约或检查行为时，请同步更新相关说明和测试。设计上坚持按需选用工件、保留已有内容，并明确区分机械检查与内容判断。
-
 ## 来源与致谢
 
 本 skill 基于以下文章和开源项目整理而成：
