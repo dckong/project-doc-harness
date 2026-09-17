@@ -151,6 +151,15 @@ python3 -m unittest discover -s tests -v
 
 修改契约或检查行为时，请同步更新相关说明和测试。设计上坚持按需选用工件、保留已有内容，并明确区分机械检查与内容判断。
 
+## 来源与致谢
+
+本 skill 基于以下文章和开源项目整理而成：
+
+- OpenAI 的 [Harness Engineering 文章](https://openai.com/zh-Hans-CN/index/harness-engineering/)
+- DeepSeek 的 [deepseek-harness 项目](https://github.com/deepseek-ai/deepseek-harness)
+
+由 GPT-6 Astra 生成
+
 ## 许可证
 
 [MIT](LICENSE) · Copyright (c) 2026 dckong
