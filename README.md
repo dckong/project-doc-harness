@@ -1,3 +1,5 @@
+由 GPT-6 Astra 生成
+
 # Project Doc Harness
 
 **让 AI 编程助手换一个会话，也能从仓库文档接着工作。**
@@ -157,8 +159,6 @@ python3 -m unittest discover -s tests -v
 
 - OpenAI 的 [Harness Engineering 文章](https://openai.com/zh-Hans-CN/index/harness-engineering/)
 - DeepSeek 的 [deepseek-harness 项目](https://github.com/deepseek-ai/deepseek-harness)
-
-由 GPT-6 Astra 生成
 
 ## 许可证
 
