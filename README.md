@@ -1,4 +1,4 @@
-由 GPT-6 Astra 生成
+本文档由 GPT-6 Astra 生成
 
 # Project Doc Harness
 
@@ -7,6 +7,16 @@
 Project Doc Harness 是一个用于整理和维护项目文档的 Agent Skill，附带零第三方依赖的 Python 初始化与检查脚本。它帮助你建立简短的 `AGENTS.md` 入口、清晰的权威来源、可恢复的执行计划，以及有证据支撑的项目状态。
 
 *An agent skill for discoverable, resumable, and maintainable project documentation.*
+
+## 使用方法
+
+安装后，在项目中对 agent 说一句就行：
+
+```text
+使用 $project-doc-harness 管理/整理项目文档
+```
+
+日常管理或整理项目文档时，agent 通常会根据任务自动调用这个 skill，无需每次手动指定。具体采用哪些文档、如何整理、何时运行检查，都由 agent 结合项目情况处理。
 
 ## 它解决什么问题
 
@@ -28,7 +38,7 @@ Project Doc Harness 是一个用于整理和维护项目文档的 Agent Skill，
 | Audit | 想知道文档缺口在哪里 | 检查结构、链接、元数据、生命周期和恢复信息 |
 | Garden | 项目持续开发，文档需要跟进 | 更新当前状态、提升计划结论、归档历史、记录技术债 |
 
-这些模式由 AI 助手按照 [SKILL.md](SKILL.md) 执行。Python 脚本提供其中的 `init` 和 `check` 两个机械工具，完整流程还包括内容审阅。
+agent 会根据项目情况选择合适的模式，具体流程见 [SKILL.md](SKILL.md)。
 
 ## 安装到 Codex
 
@@ -54,32 +64,12 @@ git clone https://github.com/dckong/project-doc-harness.git \
 
 如果只想使用命令行检查器，也可以将仓库克隆到任意目录，直接运行脚本。
 
-## 在对话中使用
+<details>
+<summary>可选：手动运行脚本与自定义文档路径</summary>
 
-在 Codex CLI / IDE 中可用 `$project-doc-harness` 显式调用；其他界面可通过技能选择器选择。以下是可以直接使用的任务描述：
+### 直接使用脚本
 
-**为新项目建立文档入口：**
-
-```text
-使用 $project-doc-harness 为这个项目建立最小文档结构。
-先阅读代码和现有约束，再决定需要哪些文档，并补齐能从项目中验证的内容。
-```
-
-**整理已有文档：**
-
-```text
-使用 $project-doc-harness 整理这个仓库的项目文档。
-先给出旧路径到新路径的迁移映射，再执行整理；保留有价值的历史和用户修改。
-```
-
-**为下一次会话交接：**
-
-```text
-使用 $project-doc-harness 更新当前项目状态和活跃计划的恢复快照，
-记录下一动作、阻塞和最近验证，并检查新会话能否从 AGENTS.md 找到这些信息。
-```
-
-## 直接使用脚本
+需要手动运行或接入 CI 时，可以使用以下命令。日常使用交给 agent 即可。
 
 以下命令在本 skill 仓库的根目录执行。将 `/path/to/your-project` 替换为需要整理的项目路径。
 
@@ -120,11 +110,13 @@ python3 scripts/doc_harness.py check --root /path/to/your-project \
 
 所有支持的工件角色、文档元数据和生命周期规则见 [文档契约](references/doc-contracts.md)；跨会话交接、等待/空闲状态和计划关闭规则见 [恢复契约](references/resumability.md)。
 
-## 检查器的边界
+### 检查器的边界
 
 检查器覆盖所选工件的存在性、入口长度、部分本地文件链接、简单元数据、日期、状态，以及恢复快照和计划关闭的必要字段。
 
 它不会验证外链、链接锚点、完整 YAML、证据真实性或内容是否符合代码与实际部署。frontmatter 仅支持每行 `key: value` 的简单未加引号标量。结构检查通过后，仍需要审阅内容和执行项目自身的验证。
+
+</details>
 
 ## 仓库结构
 
