@@ -116,6 +116,8 @@ python3 scripts/doc_harness.py check --root /path/to/your-project \
 
 所有支持的工件角色、文档元数据和生命周期规则见 [文档契约](references/doc-contracts.md)；跨会话交接、等待/空闲状态和计划关闭规则见 [恢复契约](references/resumability.md)。
 
+项目已有 skills 时，入口、权威归属与结果落点的整理方式见 [已有项目 skills 的文档管理](references/project-skills.md)。
+
 ### 检查器的边界
 
 检查器覆盖所选工件的存在性、入口长度、部分本地文件链接、简单元数据、日期、状态，以及恢复快照和计划关闭的必要字段。
@@ -134,6 +136,7 @@ project-doc-harness/
 ├── agents/openai.yaml             # Codex 展示信息与默认提示
 ├── references/
 │   ├── doc-contracts.md           # 文档结构、元数据与生命周期契约
+│   ├── project-skills.md           # 已有项目 skills 的文档管理
 │   └── resumability.md            # 跨会话恢复与计划关闭契约
 ├── scripts/doc_harness.py         # 初始化与机械检查工具
 └── tests/test_doc_harness.py       # 标准库 unittest 测试

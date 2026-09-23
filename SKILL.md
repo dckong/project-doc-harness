@@ -2,7 +2,7 @@
 name: project-doc-harness
 description: Organize, scaffold, migrate, audit, and maintain repository-local project documentation so memoryless coding agents can recover current state, navigate authoritative sources, continue cross-session work, and avoid design drift. Use for new-project setup, AGENTS.md design, docs/ information architecture, project-state or execution-plan handoff, architecture or product documentation, decision lifecycle, documentation cleanup, doc-gardening, broken-link or freshness audits, and requests such as “为 AI 开发整理项目文档”, “重构仓库文档结构”, or “make this repo agent-friendly”.
 metadata:
-  version: "1.3.1"
+  version: "1.4.1"
 ---
 
 # Project Doc Harness
@@ -58,6 +58,8 @@ metadata:
 - 应保留、整合、提升、归档还是生成。
 
 对旧仓库，先输出迁移映射再做大规模移动。无法由代码验证的产品意图不要自行补造，标记为待确认。
+
+项目已有 skills 时，将其入口、引用、信息归属和结果落点纳入本次盘点；隐藏目录按需使用 `rg --files --hidden` 查找。仅在发现已有项目 skills 或失效的 skill 引用时读取 [references/project-skills.md](references/project-skills.md)。未采用 skills 的项目忽略此项，不创建目录、不报缺失、不推荐补齐。Skills 的构建方式与行为调整由用户监督，本工具不制定创作规则；用户授权的流程权威迁移可将正文移入已有 skill，并同步精简原文档。
 
 ### 3. 设计最小信息架构
 
