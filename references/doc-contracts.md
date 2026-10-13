@@ -16,7 +16,7 @@
 
 ## 最小结构
 
-按项目复杂度选用，不要求一次创建全部文件。以下路径是默认约定，允许映射到项目已有的等价位置。
+按项目复杂度选用所需工件。以下路径是默认约定，允许映射到项目已有的等价位置。
 
 | 工件 | 何时需要 | 权威内容 |
 | --- | --- | --- |
@@ -51,7 +51,7 @@
 ```
 
 - 对象中列出的角色表示已采用；路径必须位于仓库内。文件角色指向文件，目录角色指向目录。
-- 未列出的角色不启用对应契约；已列出但缺失的文件或目录会报错。不要为消除真实缺口而移除适用角色。
+- 未列出的角色不启用对应契约；已列出但缺失的文件或目录会报错。适用但缺失的角色仍须保留并报告缺口。
 - 支持的文件角色：`architecture`、`project-state`、`tech-debt`、`quality`、`reliability`、`security`。
 - 支持的目录角色：`design-docs`、`product-specs`、`plans`、`operations`、`generated`、`references`。设计与产品目录需要 `index.md`；计划目录下需要 `active/index.md` 与 `completed/index.md`。
 - `plans` 不自动启用技术债务 tracker；项目需要时独立选择 `tech-debt`。存在活跃计划时必须选择并维护 `project-state`，配置不能取消该恢复要求。
@@ -61,7 +61,7 @@
 
 没有配置时，脚本按已存在的默认路径识别可选工件；空仓库默认只初始化 `AGENTS.md`。这种兼容模式无法发现整个可选工件被删除，或自动识别非默认路径，因此正式接入 CI、采用自定义路径或需要检查缺失工件时应提交配置。
 
-目录树和模板不构成额外需求。选择设计文档目录不会自动创建 `core-beliefs.md`；只有存在需要记录的原则或决策时才创建正文。初始化只创建缺失的 Markdown，不修改已有 Markdown；显式 `--with` 选项会更新工件配置。已有 `AGENTS.md` 缺少项目状态链接时会报告 `ACTION_REQUIRED`，需要在文档维护中补齐。初始化留下的 TODO/TBD 需要用项目事实补齐；机械检查通过不表示内容已经完成。
+目录树和模板不构成额外需求。选择设计文档目录不会自动创建 `core-beliefs.md`；只有存在需要记录的原则或决策时才创建正文。初始化只创建缺失的 Markdown，保留已有 Markdown；显式 `--with` 选项会更新工件配置。已有 `AGENTS.md` 缺少项目状态链接时会报告 `ACTION_REQUIRED`，需要在文档维护中补齐。初始化留下的 TODO/TBD 需要用项目事实补齐；机械检查通过不表示内容已经完成。
 
 ## 信息状态
 
@@ -96,7 +96,7 @@
 
 ## 元数据约定
 
-`owner` 表示负责维护或确认内容的人、团队或角色，不表示存放事实的文档。主要权威来源通过文件路径或链接另行标注。
+`owner` 表示负责维护或确认内容的人、团队或角色；主要权威来源通过文件路径或链接另行标注。
 
 对当前状态、架构、设计、产品、计划、运行、安全和可靠性文档使用 YAML frontmatter：
 
@@ -111,7 +111,7 @@ last_reviewed: YYYY-MM-DD
 
 可选或按类型要求的字段：
 
-- `verified_commit`: 文档最近与之核验的 commit 或明确的工作树标识；`project-state` 必填，未核验时明确写 `Unknown` 并在 `Last verified` 说明局限，不能冒充验证通过。
+- `verified_commit`: 文档最近与之核验的 commit 或明确的工作树标识；`project-state` 必填，未核验时明确写 `Unknown` 并在 `Last verified` 说明局限。
 - `observed_at`: 易变运行事实的实际观测日期或时间。
 - `environment`: `local`、`test`、`staging`、`production` 或项目定义的环境。
 - `supersedes`: 当前文档取代的仓库相对路径。
@@ -124,7 +124,7 @@ last_reviewed: YYYY-MM-DD
 - `observation_max_age_days`: 正整数，设置 `observed_at` 的有效期；未设置时使用 `--stale-days`。
 - `work_status`: 项目状态的工作状态，`active`、`waiting` 或 `idle`；独立于文档生命周期 `status: active`。旧文档省略时按工作活跃处理。
 
-不要虚构 owner、日期或验证证据。迁移中的未知值可暂时使用 `TBD`，但 `active`、`blocked`、`accepted` 和 `implemented` 文档必须在严格检查前落实真实 owner。`verified_commit` 指向最近实际核验的代码或工作树，不要求它包含随后提交的纯文档修改。
+owner、日期和验证证据按实际情况填写。迁移中的未知值可暂时使用 `TBD`，但 `active`、`blocked`、`accepted` 和 `implemented` 文档必须在严格检查前落实真实 owner。`verified_commit` 指向最近实际核验的代码或工作树，不要求它包含随后提交的纯文档修改。
 
 ## 新鲜度契约
 
@@ -229,7 +229,7 @@ last_reviewed: YYYY-MM-DD
 ## Related sources
 ```
 
-`proposed` 说明待决方案、验收和风险；`accepted` 记录批准依据并链接实施计划，不能用已落地的口吻描述；`implemented` 用现在时说明已生效机制并链接验证证据；`rejected` 说明仍可能被重新提出的方案为什么不成立；`superseded` 链接替代文档。`design-docs/index.md` 至少列出标题、状态、owner、最近复审日期和链接。
+`proposed` 说明待决方案、验收和风险；`accepted` 记录批准依据并链接实施计划，明确标为待实施；`implemented` 用现在时说明已生效机制并链接验证证据；`rejected` 说明仍可能被重新提出的方案为什么不成立；`superseded` 链接替代文档。`design-docs/index.md` 至少列出标题、状态、owner、最近复审日期和链接。
 
 ### 产品规格
 
@@ -292,7 +292,7 @@ last_reviewed: YYYY-MM-DD
 
 ### 技术债务 tracker
 
-使用 `doc_type: tech-debt`。每项包含 `ID`、影响范围、风险、证据、推荐方向、owner、状态和最近复审日期。不要把没有证据的偏好登记成债务。计划关闭时未排期工作必须进入新计划或 tracker，不能只留在 completed plan。
+使用 `doc_type: tech-debt`。每项包含 `ID`、影响范围、风险、证据、推荐方向、owner、状态和最近复审日期。只登记有证据支持的债务。计划关闭时未排期工作必须进入新计划或 tracker。
 
 ### 运行状态
 
@@ -367,4 +367,4 @@ CI 应验证生成物未过期；若暂时不能验证，在 `QUALITY_SCORE.md` 
 | 可执行性 | 命令是否可复制运行，验收标准是否可测试？ |
 | 耦合度 | 信息角色是否清晰，一次变化需要人工同步的当前文档是否保持在合理范围？ |
 
-使用 `good / partial / missing / stale`，并为 `partial`、`missing`、`stale` 记录下一步和 owner。分数用于暴露缺口，不用于美化报表。
+使用 `good / partial / missing / stale`，并为 `partial`、`missing`、`stale` 记录下一步和 owner。评分应如实反映缺口及后续工作。
