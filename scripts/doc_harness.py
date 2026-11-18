@@ -349,7 +349,7 @@ Unknown — environments have not been compared.
 
 ## Last verified
 
-Unknown — no verification recorded. Link task/environment evidence when available; do not copy every plan result.
+Unknown — link the latest verification record for the task and environment when available.
 
 ## Decisions and review conditions
 
@@ -957,7 +957,10 @@ def audit(root: Path, strict: bool, stale_days: int) -> int:
     if placeholders:
         report.info.append(f"found {placeholders} TODO/TBD placeholder(s) requiring project knowledge")
 
-    report.info.append("Mechanical checks only: supported local file-link targets, index filename mentions, metadata, dates, states and required sections. Not verified: anchors, evidence truth, action feasibility, freshness events or semantic agreement; content review is required.")
+    report.info.append(
+        f"Scanned {len(paths)} Markdown files. Structural checks cover local file-link targets, "
+        "index entries, metadata, dates, states and required sections."
+    )
     report.print()
     if report.errors or (strict and report.warnings):
         return 1

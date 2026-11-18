@@ -698,11 +698,15 @@ class LifecycleAndRecoveryTests(unittest.TestCase):
         self.assertEqual(result, 1)
         self.assertIn("missing heading: Decisions and review conditions", output)
 
-    def test_report_distinguishes_structure_from_content_review(self) -> None:
+    def test_report_counts_scanned_markdown_files(self) -> None:
         result, output = self.audit()
         self.assertEqual(result, 0, output)
-        self.assertIn("Mechanical checks only", output)
-        self.assertIn("content review is required", output)
+        count = len(doc_harness.markdown_files(self.root))
+        self.assertIn(f"Scanned {count} Markdown files", output)
+        (self.root / "notes.md").write_text("# Notes\n", encoding="utf-8")
+        result, output = self.audit()
+        self.assertEqual(result, 0, output)
+        self.assertIn(f"Scanned {count + 1} Markdown files", output)
 
 
 if __name__ == "__main__":
